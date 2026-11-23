@@ -10,6 +10,7 @@ import {
   MdGrading, MdTrendingUp, MdQuestionAnswer
 } from 'react-icons/md';
 import axiosClient from '../api/axiosClient';
+import { resolveFileUrl } from '../utils/fileUrl';
 import ThemeToggle from './ThemeToggle';
 
 function getNavGroups() {
@@ -174,8 +175,31 @@ function Sidebar({ open, onClose, pendingCount }) {
 export default function InstructorLayout({ children }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
+  const [profileImageUrl, setProfileImageUrl] = useState('');
   const location = useLocation();
   const { user } = useAuth();
+
+  useEffect(() => {
+    let mounted = true;
+    if (user?.id) {
+      axiosClient.get('/instructor/profile')
+        .then(({ data }) => {
+          if (mounted) setProfileImageUrl(data.profile?.profile_image_url || '');
+        })
+        .catch(err => {
+          if (mounted) console.error('Failed to load instructor profile image:', err);
+        });
+    }
+
+    const handleProfileImageUpdate = event => {
+      setProfileImageUrl(event.detail || '');
+    };
+    window.addEventListener('instructor-profile-image-updated', handleProfileImageUpdate);
+    return () => {
+      mounted = false;
+      window.removeEventListener('instructor-profile-image-updated', handleProfileImageUpdate);
+    };
+  }, [user?.id]);
 
   useEffect(() => {
     let mounted = true;
@@ -240,9 +264,13 @@ export default function InstructorLayout({ children }) {
             >
               <MdNotifications className="text-xl" />
             </Link>
-            <Link to="/instructor/profile" className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-400 to-purple-500 flex items-center justify-center text-white text-xs font-bold">
-                {user?.full_name?.charAt(0) || 'I'}
+            <Link to="/instructor/profile" className="flex items-center gap-2" aria-label="Open instructor profile">
+              <div className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-400 to-purple-500 flex items-center justify-center text-white text-xs font-bold overflow-hidden">
+                {profileImageUrl ? (
+                  <img src={resolveFileUrl(profileImageUrl)} alt="" className="w-full h-full object-cover" />
+                ) : (
+                  user?.full_name?.charAt(0) || 'I'
+                )}
               </div>
             </Link>
           </div>

@@ -4,6 +4,10 @@
  * Security: Every request verifies JWT → role=instructor → course ownership.
  */
 const { query, pool } = require('../config/db');
+const bcrypt = require('bcrypt');
+const fs = require('fs');
+const multer = require('multer');
+const { profileImageUpload } = require('../middleware/upload');
 
 /* ─── Helpers ─── */
 
@@ -377,7 +381,7 @@ async function markAllNotificationsRead(req, res, next) {
 async function getProfile(req, res, next) {
   try {
     const { rows } = await query(
-      `SELECT u.id, u.full_name, u.email, u.phone, u.is_active,
+      `SELECT u.id, u.full_name, u.email, u.phone, u.profile_image_url, u.is_active,
               i.bio, i.qualification, i.specialty,
               CASE WHEN u.is_active THEN 'active' ELSE 'inactive' END AS status
        FROM users u
@@ -428,7 +432,7 @@ async function updateProfile(req, res, next) {
     }
 
     const { rows } = await query(
-      `SELECT u.id, u.full_name, u.email, u.phone,
+      `SELECT u.id, u.full_name, u.email, u.phone, u.profile_image_url,
               i.bio, i.qualification, i.specialty,
               CASE WHEN u.is_active THEN 'active' ELSE 'inactive' END AS status
        FROM users u
@@ -440,6 +444,72 @@ async function updateProfile(req, res, next) {
   } catch (err) {
     next(err);
   }
+}
+
+async function changePassword(req, res, next) {
+  try {
+    const { current_password, new_password, confirm_password } = req.body;
+
+    if (![current_password, new_password, confirm_password].every(value => typeof value === 'string' && value.length)) {
+      return res.status(400).json({ error: 'All fields are required' });
+    }
+    if (new_password !== confirm_password) {
+      return res.status(400).json({ error: 'New password and confirm password do not match' });
+    }
+    if (new_password.length < 8) {
+      return res.status(400).json({ error: 'Password must be at least 8 characters long' });
+    }
+
+    const userResult = await query('SELECT password_hash FROM users WHERE id = $1', [req.user.id]);
+    if (!userResult.rows.length) return res.status(404).json({ error: 'User not found' });
+
+    const matches = await bcrypt.compare(current_password, userResult.rows[0].password_hash);
+    if (!matches) return res.status(400).json({ error: 'Current password is incorrect' });
+
+    const passwordHash = await bcrypt.hash(new_password, 12);
+    await query(
+      'UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2',
+      [passwordHash, req.user.id]
+    );
+    res.json({ message: 'Password changed successfully' });
+  } catch (err) {
+    next(err);
+  }
+}
+
+function uploadProfileImage(req, res, next) {
+  profileImageUpload.single('file')(req, res, async err => {
+    if (err) {
+      const message = err.code === 'LIMIT_FILE_SIZE'
+        ? 'Profile image must be 5 MB or smaller'
+        : err.code === 'FILE_TYPE_NOT_ALLOWED'
+          ? err.message
+          : err.message || 'Profile image upload failed';
+      return res.status(400).json({ error: message });
+    }
+    if (!req.file) return res.status(400).json({ error: 'Choose a profile image to upload' });
+
+    try {
+      const imageUrl = `/uploads/profiles/${req.file.filename}`;
+      const { rows } = await query(
+        'UPDATE users SET profile_image_url = $1, updated_at = now() WHERE id = $2 RETURNING profile_image_url',
+        [imageUrl, req.user.id]
+      );
+      if (!rows.length) {
+        fs.unlink(req.file.path, unlinkErr => {
+          if (unlinkErr) console.error('Failed to remove unused instructor profile image:', unlinkErr);
+        });
+        return res.status(404).json({ error: 'User not found' });
+      }
+
+      res.json({ profile_image_url: rows[0].profile_image_url });
+    } catch (uploadErr) {
+      fs.unlink(req.file.path, unlinkErr => {
+        if (unlinkErr) console.error('Failed to remove unused instructor profile image:', unlinkErr);
+      });
+      next(uploadErr);
+    }
+  });
 }
 
 /* ─── Messages ─── */
@@ -997,6 +1067,8 @@ module.exports = {
   markAllNotificationsRead,
   getProfile,
   updateProfile,
+  changePassword,
+  uploadProfileImage,
   getConversations,
   getConversation,
   sendMessage,

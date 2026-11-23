@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import { MdPerson, MdEdit, MdSave, MdClose, MdSchool, MdEmail, MdPhone } from 'react-icons/md';
+import { MdPerson, MdEdit, MdSave, MdClose, MdSchool, MdEmail, MdPhone, MdPhotoCamera, MdLock } from 'react-icons/md';
 import InstructorLayout from '../../components/InstructorLayout';
 import axiosClient from '../../api/axiosClient';
+import { resolveFileUrl } from '../../utils/fileUrl';
 
 export default function InstructorProfile() {
   const [profile, setProfile] = useState(null);
@@ -11,6 +12,13 @@ export default function InstructorProfile() {
   const [form, setForm]       = useState({});
   const [error, setError]     = useState('');
   const [success, setSuccess] = useState('');
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [savingPassword, setSavingPassword] = useState(false);
+  const [passwordError, setPasswordError] = useState('');
+  const [passwordSuccess, setPasswordSuccess] = useState('');
 
   useEffect(() => {
     axiosClient.get('/instructor/profile')
@@ -41,6 +49,55 @@ export default function InstructorProfile() {
     }
   }
 
+  async function changeProfileImage(e) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+
+    const formData = new FormData();
+    formData.append('file', file);
+    setError('');
+    setUploadingImage(true);
+    try {
+      const { data } = await axiosClient.post('/instructor/profile/image', formData);
+      setProfile(current => ({ ...current, profile_image_url: data.profile_image_url }));
+      window.dispatchEvent(new CustomEvent('instructor-profile-image-updated', { detail: data.profile_image_url }));
+      setSuccess('Profile image updated successfully!');
+      setTimeout(() => setSuccess(''), 3000);
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to upload profile image');
+    } finally {
+      setUploadingImage(false);
+    }
+  }
+
+  async function changePassword(e) {
+    e.preventDefault();
+    setPasswordError('');
+    setPasswordSuccess('');
+    if (newPassword !== confirmPassword) {
+      setPasswordError('New password and confirmation do not match.');
+      return;
+    }
+
+    setSavingPassword(true);
+    try {
+      await axiosClient.post('/instructor/change-password', {
+        current_password: currentPassword,
+        new_password: newPassword,
+        confirm_password: confirmPassword,
+      });
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      setPasswordSuccess('Password changed successfully.');
+    } catch (err) {
+      setPasswordError(err.response?.data?.error || 'Failed to change password.');
+    } finally {
+      setSavingPassword(false);
+    }
+  }
+
   if (loading) return (
     <InstructorLayout>
       <div className="max-w-3xl mx-auto space-y-4">
@@ -64,13 +121,35 @@ export default function InstructorProfile() {
         <div className="bg-gradient-to-br from-indigo-600 to-purple-700 rounded-2xl p-6 text-white relative overflow-hidden">
           <div className="absolute -top-10 -right-10 w-40 h-40 bg-white/5 rounded-full pointer-events-none" />
           <div className="flex items-center gap-5 relative">
-            <div className="w-20 h-20 rounded-full bg-white/20 border-2 border-white/30 flex items-center justify-center text-3xl font-bold">
-              {profile?.full_name?.charAt(0) || 'I'}
+            <div className="relative w-20 h-20 flex-shrink-0">
+              <div className="w-full h-full rounded-full bg-white/20 border-2 border-white/30 overflow-hidden flex items-center justify-center text-3xl font-bold">
+                {profile?.profile_image_url ? (
+                  <img src={resolveFileUrl(profile.profile_image_url)} alt={`${profile.full_name}'s profile`} className="w-full h-full object-cover" />
+                ) : (
+                  profile?.full_name?.charAt(0) || 'I'
+                )}
+              </div>
+              <label
+                htmlFor="instructor-profile-image"
+                title="Change profile image"
+                className={`absolute bottom-0 right-0 p-1.5 rounded-full bg-white text-indigo-700 shadow cursor-pointer hover:bg-indigo-50 ${uploadingImage ? 'opacity-60 pointer-events-none' : ''}`}
+              >
+                <MdPhotoCamera />
+              </label>
+              <input
+                id="instructor-profile-image"
+                type="file"
+                accept="image/jpeg,image/png,image/gif,image/webp"
+                className="sr-only"
+                disabled={uploadingImage}
+                onChange={changeProfileImage}
+              />
             </div>
             <div>
               <h2 className="text-xl font-bold">{profile?.full_name}</h2>
               <p className="text-indigo-200 flex items-center gap-1.5 text-sm mt-1"><MdEmail className="text-base" /> {profile?.email}</p>
               {profile?.phone && <p className="text-indigo-200 flex items-center gap-1.5 text-sm mt-0.5"><MdPhone className="text-base" /> {profile?.phone}</p>}
+              {uploadingImage && <p className="text-indigo-100 text-xs mt-1">Uploading image…</p>}
             </div>
             <div className="ml-auto">
               <span className="bg-white/15 border border-white/20 text-white text-xs font-semibold px-3 py-1.5 rounded-full capitalize">
@@ -176,6 +255,57 @@ export default function InstructorProfile() {
               </div>
             </form>
           )}
+        </div>
+
+        <div className="bg-white rounded-2xl border border-slate-200 p-6">
+          <h3 className="font-bold text-slate-800 flex items-center gap-2 mb-4"><MdLock className="text-indigo-600" /> Change Password</h3>
+          {passwordSuccess && <div className="mb-4 rounded-xl bg-emerald-50 border border-emerald-200 p-3 text-sm text-emerald-700">{passwordSuccess}</div>}
+          {passwordError && <div className="mb-4 rounded-xl bg-red-50 border border-red-200 p-3 text-sm text-red-700">{passwordError}</div>}
+          <form onSubmit={changePassword} className="space-y-4 max-w-lg">
+            <div>
+              <label htmlFor="instructor-current-password" className="block text-sm font-medium text-slate-600 mb-1">Current Password</label>
+              <input
+                id="instructor-current-password"
+                type="password"
+                autoComplete="current-password"
+                value={currentPassword}
+                onChange={e => setCurrentPassword(e.target.value)}
+                required
+                className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-indigo-400 focus:outline-none"
+              />
+            </div>
+            <div className="grid sm:grid-cols-2 gap-4">
+              <div>
+                <label htmlFor="instructor-new-password" className="block text-sm font-medium text-slate-600 mb-1">New Password</label>
+                <input
+                  id="instructor-new-password"
+                  type="password"
+                  autoComplete="new-password"
+                  minLength={8}
+                  value={newPassword}
+                  onChange={e => setNewPassword(e.target.value)}
+                  required
+                  className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-indigo-400 focus:outline-none"
+                />
+              </div>
+              <div>
+                <label htmlFor="instructor-confirm-password" className="block text-sm font-medium text-slate-600 mb-1">Confirm New Password</label>
+                <input
+                  id="instructor-confirm-password"
+                  type="password"
+                  autoComplete="new-password"
+                  minLength={8}
+                  value={confirmPassword}
+                  onChange={e => setConfirmPassword(e.target.value)}
+                  required
+                  className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-indigo-400 focus:outline-none"
+                />
+              </div>
+            </div>
+            <button type="submit" disabled={savingPassword} className="flex items-center gap-2 px-5 py-2 bg-indigo-600 text-white rounded-xl text-sm font-semibold hover:bg-indigo-700 disabled:opacity-60">
+              <MdLock /> {savingPassword ? 'Updating…' : 'Update Password'}
+            </button>
+          </form>
         </div>
 
         {/* Courses summary */}
