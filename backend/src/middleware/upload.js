@@ -5,8 +5,36 @@ const multer = require('multer');
 
 const UPLOAD_ROOT = path.join(__dirname, '..', '..', 'uploads');
 const MATERIAL_DIR = path.join(UPLOAD_ROOT, 'materials');
+const PROFILE_DIR = path.join(UPLOAD_ROOT, 'profiles');
 
 fs.mkdirSync(MATERIAL_DIR, { recursive: true });
+fs.mkdirSync(PROFILE_DIR, { recursive: true });
+
+const PROFILE_IMAGE_MIME = {
+  'image/jpeg': '.jpg',
+  'image/png': '.png',
+  'image/gif': '.gif',
+  'image/webp': '.webp',
+};
+
+const profileImageStorage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, PROFILE_DIR),
+  filename: (req, file, cb) => {
+    const ext = PROFILE_IMAGE_MIME[file.mimetype];
+    cb(null, `${Date.now()}-${crypto.randomBytes(6).toString('hex')}${ext}`);
+  },
+});
+
+const profileImageUpload = multer({
+  storage: profileImageStorage,
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (PROFILE_IMAGE_MIME[file.mimetype]) return cb(null, true);
+    cb(Object.assign(new multer.MulterError('FILE_TYPE_NOT_ALLOWED'), {
+      message: 'Profile images must be JPEG, PNG, GIF or WebP files',
+    }));
+  },
+});
 
 // Whitelisted mime types → extension. Documents, presentations, spreadsheets,
 // images, audio, video and zips, covering the material types instructors add.
@@ -87,4 +115,12 @@ function parseMultipartFile(field = 'file') {
   };
 }
 
-module.exports = { upload, parseMultipartFile, UPLOAD_ROOT, MATERIAL_DIR, MAX_SIZE };
+module.exports = {
+  upload,
+  profileImageUpload,
+  parseMultipartFile,
+  UPLOAD_ROOT,
+  MATERIAL_DIR,
+  PROFILE_DIR,
+  MAX_SIZE,
+};

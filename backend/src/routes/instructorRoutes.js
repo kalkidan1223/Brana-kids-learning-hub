@@ -16,6 +16,8 @@ router.get('/dashboard', guard, ctrl.getDashboard);
 // ── Profile ────────────────────────────────────────────────────────────────
 router.get('/profile', guard, ctrl.getProfile);
 router.patch('/profile', guard, ctrl.updateProfile);
+router.post('/profile/image', guard, ctrl.uploadProfileImage);
+router.post('/change-password', guard, ctrl.changePassword);
 
 // ── Courses (Instructor LMS workspace) ────────────────────────────────────
 router.get('/courses', guard, ctrl.listCourses);
