@@ -148,9 +148,9 @@ export default function ChildLayout() {
   // Keep the main navigation focused; secondary destinations live under More.
   const navItems = [
     { path: '/child', label: 'Home', icon: '🏠' },
-    { path: '/child/courses', label: 'Courses', icon: '📚' },
-    { path: '/child/activities', label: 'Activities', icon: '🎯' },
-    { path: '/child/progress', label: 'Progress', icon: '📊' },
+    { path: '/child/courses', label: 'Lessons', icon: '📚' },
+    { path: '/child/activities', label: 'Play', icon: '🎯' },
+    { path: '/child/progress', label: 'My stars', icon: '⭐' },
   ];
   const moreItems = [
     { path: '/child/quizzes', label: 'Quizzes', icon: '📝' },
@@ -162,7 +162,7 @@ export default function ChildLayout() {
   ];
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-50 text-slate-800">
+    <div className="min-h-screen flex flex-col bg-[#fffaf0] text-slate-800">
       {/* Parent Mode Top Ribbon */}
       {user?.role === 'parent' && (
         <aside aria-label="Parent assistance controls" className="bg-gradient-to-r from-purple-600 via-pink-600 to-orange-500 text-white px-4 py-2 text-sm shadow-sm flex flex-wrap items-center justify-between gap-3 sticky top-0 z-50">
@@ -199,17 +199,17 @@ export default function ChildLayout() {
       )}
 
       {/* Top Navigation Bar - Child-friendly, no scrolling */}
-      <nav aria-label="Child portal navigation" className="sticky top-0 z-40 border-b border-slate-200 bg-white/95 shadow-sm backdrop-blur-md">
+      <nav aria-label="Child portal navigation" className="sticky top-0 z-40 border-b border-amber-100 bg-[#fffdf8]/95 shadow-sm backdrop-blur-md">
         <div className="max-w-7xl mx-auto px-4 py-3">
           {/* Logo and User Actions Row */}
           <div className="flex items-center justify-between mb-3">
             {/* Logo */}
             <div className="flex items-center gap-3 cursor-pointer" onClick={() => navigate('/child')}>
-              <div className="w-12 h-12 rounded-2xl bg-emerald-700 flex items-center justify-center text-2xl text-white shadow-sm">
-                📜
+              <div className="w-12 h-12 rounded-2xl bg-amber-500 flex items-center justify-center text-2xl text-white shadow-sm">
+                🌈
               </div>
               <div className="hidden sm:block">
-                <span className="text-xs font-black uppercase tracking-wider text-emerald-700 block">
+                <span className="text-xs font-black uppercase tracking-wider text-amber-800 block">
                   Brana Kids Hub
                 </span>
                 <h1 className="text-lg font-black text-slate-900">Learning space</h1>
@@ -270,8 +270,8 @@ export default function ChildLayout() {
                   className={`
                     relative flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-sm transition-all border-2
                     ${active
-                      ? 'bg-emerald-700 text-white shadow-sm border-emerald-700'
-                      : 'text-slate-600 hover:bg-emerald-50 hover:text-emerald-800 border-transparent hover:border-emerald-200'
+                      ? 'bg-amber-600 text-white shadow-sm border-amber-600'
+                      : 'text-slate-600 hover:bg-amber-50 hover:text-amber-900 border-transparent hover:border-amber-200'
                     }
                   `}
                   aria-current={active ? 'page' : undefined}

@@ -12,6 +12,11 @@ export const ETHIOPIAN_MONTHS = [
   'Megabit', 'Miazia', 'Ginbot', 'Sene', 'Hamle', 'Nehase', 'Pagume',
 ];
 
+export const ETHIOPIAN_MONTHS_AMHARIC = [
+  'መስከረም', 'ጥቅምት', 'ኅዳር', 'ታኅሣሥ', 'ጥር', 'የካቲት',
+  'መጋቢት', 'ሚያዝያ', 'ግንቦት', 'ሰኔ', 'ሐምሌ', 'ነሐሴ', 'ጳጉሜን',
+];
+
 function mod(a, b) {
   return ((a % b) + b) % b;
 }
@@ -65,7 +70,10 @@ export function isEthiopianLeapYear(year) {
 
 // Pagume (month 13) has 5 days, or 6 in a leap year.
 export function ethiopianMonthLength(year, month) {
-  if (month === 13) return isEthiopianLeapYear(year) ? 6 : 5;
+  if (month === 13) {
+    if (!Number.isInteger(year) || year < 1) return 6;
+    return isEthiopianLeapYear(year) ? 6 : 5;
+  }
   return 30;
 }
 
@@ -93,5 +101,6 @@ export function gregorianISOToEthiopian(iso) {
 export function formatEthiopianDate(iso) {
   const et = gregorianISOToEthiopian(iso);
   if (!et) return '';
-  return `${ETHIOPIAN_MONTHS[et.month - 1]} ${et.day}, ${et.year} E.C.`;
+  const amMonth = ETHIOPIAN_MONTHS_AMHARIC[et.month - 1] || ETHIOPIAN_MONTHS[et.month - 1];
+  return `${amMonth} ${et.day}, ${et.year} ዓ.ም.`;
 }

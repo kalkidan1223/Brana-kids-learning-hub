@@ -62,7 +62,8 @@ async function resolveStudentId(req) {
  */
 async function getLessonAccess(studentId, lessonId) {
   const lessonRes = await query(
-    `SELECT l.id, l.course_id, c.sequential_learning, c.status AS course_status,
+    `SELECT l.id, l.course_id, l.is_locked, l.unlock_after_lesson_id,
+            c.sequential_learning, c.status AS course_status,
             c.grade_level_id, l.status AS lesson_status, s.grade_level_id AS student_grade_level_id
      FROM lessons l
      JOIN courses c ON c.id = l.course_id
@@ -77,6 +78,22 @@ async function getLessonAccess(studentId, lessonId) {
       String(lesson.grade_level_id) !== String(lesson.student_grade_level_id)) {
     return { exists: false, courseId: lesson.course_id, isLocked: true };
   }
+  if (lesson.is_locked) {
+    if (!lesson.unlock_after_lesson_id) {
+      return { exists: true, courseId: lesson.course_id, isLocked: true };
+    }
+    const prerequisite = await query(
+      `SELECT EXISTS (
+         SELECT 1 FROM progress WHERE student_id = $1 AND lesson_id = $2 AND status = 'completed'
+         UNION ALL
+         SELECT 1 FROM student_lesson_progress WHERE student_id = $1 AND lesson_id = $2 AND status = 'completed'
+       ) AS completed`,
+      [studentId, lesson.unlock_after_lesson_id]
+    );
+    if (!prerequisite.rows[0]?.completed) {
+      return { exists: true, courseId: lesson.course_id, isLocked: true };
+    }
+  }
   if (!lesson.sequential_learning) {
     return { exists: true, courseId: lesson.course_id, isLocked: false };
   }
@@ -87,10 +104,11 @@ async function getLessonAccess(studentId, lessonId) {
        FROM lessons l
        WHERE l.course_id = $1
      )
-     SELECT p.id AS prev_id, COALESCE(slp.status, 'not_started') AS prev_status
+     SELECT p.id AS prev_id, COALESCE(slp.status, pr.status::text, 'not_started') AS prev_status
      FROM ordered o
      LEFT JOIN ordered p ON p.rn = o.rn - 1
      LEFT JOIN student_lesson_progress slp ON slp.lesson_id = p.id AND slp.student_id = $2
+     LEFT JOIN progress pr ON pr.lesson_id = p.id AND pr.student_id = $2
      WHERE o.id = $3`,
     [lesson.course_id, studentId, lessonId]
   );

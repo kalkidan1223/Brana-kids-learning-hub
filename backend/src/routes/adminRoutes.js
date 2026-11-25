@@ -62,6 +62,7 @@ router.get('/progress', requireAuth, authorize('admin'), adminExtController.list
 
 // --- AI Recommendations (admin view all) ---
 router.get('/ai-recommendations', requireAuth, authorize('admin'), adminExtController.listAIRecommendations);
+router.get('/ai-training-readiness', requireAuth, authorize('admin'), adminExtController.getAITrainingReadiness);
 router.patch('/ai-recommendations/:id/view', requireAuth, authorize('admin'), adminExtController.markRecommendationViewed);
 
 // --- Announcements ---

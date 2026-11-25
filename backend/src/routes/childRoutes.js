@@ -14,6 +14,7 @@ const authChild = [requireAuth, authorize('student', 'parent')];
 // Profile & Dashboard
 router.get('/profile', ...authChild, childController.getProfile);
 router.get('/dashboard', ...authChild, childController.getDashboard);
+router.post('/recommendations/:recommendationId/start', ...authChild, childController.startChildRecommendation);
 
 // Courses & Lessons
 router.get('/courses', ...authChild, childController.listCourses);

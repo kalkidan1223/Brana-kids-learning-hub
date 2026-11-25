@@ -29,6 +29,10 @@ const ALLOWED_MIME = {
   'audio/mpeg': '.mp3',
   'audio/wav': '.wav',
   'audio/ogg': '.ogg',
+  'audio/webm': '.webm',
+  'audio/mp4': '.m4a',
+  'audio/x-m4a': '.m4a',
+  'audio/aac': '.aac',
   'video/mp4': '.mp4',
   'video/webm': '.webm',
   'video/quicktime': '.mov',
@@ -41,13 +45,15 @@ const MAX_SIZE = 100 * 1024 * 1024; // 100 MB
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, MATERIAL_DIR),
   filename: (req, file, cb) => {
-    const ext = ALLOWED_MIME[file.mimetype] || path.extname(file.originalname).toLowerCase() || '';
+    const cleanMime = (file.mimetype || '').split(';')[0].trim().toLowerCase();
+    const ext = ALLOWED_MIME[cleanMime] || ALLOWED_MIME[file.mimetype] || path.extname(file.originalname).toLowerCase() || '';
     cb(null, `${Date.now()}-${crypto.randomBytes(6).toString('hex')}${ext}`);
   },
 });
 
 const fileFilter = (req, file, cb) => {
-  if (ALLOWED_MIME[file.mimetype]) return cb(null, true);
+  const cleanMime = (file.mimetype || '').split(';')[0].trim().toLowerCase();
+  if (ALLOWED_MIME[cleanMime] || ALLOWED_MIME[file.mimetype]) return cb(null, true);
   cb(
     Object.assign(new multer.MulterError('FILE_TYPE_NOT_ALLOWED'), {
       message: `File type "${file.mimetype}" is not allowed`,

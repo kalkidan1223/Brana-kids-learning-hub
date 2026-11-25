@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import axiosClient, { setActiveChildId } from '../../api/axiosClient';
+import DateOfBirthField from '../../components/DateOfBirthField';
+import { formatEthiopianDate } from '../../utils/ethiopianDate';
 import {
   MdPerson,
   MdSchool,
@@ -335,7 +337,10 @@ export default function ParentChildren() {
                     <div className="flex-1 min-w-0">
                       <h3 className="font-extrabold text-lg text-slate-900 truncate">{child.full_name}</h3>
                       <div className="text-xs text-slate-500 mt-0.5">
-                        Age: <strong className="text-slate-800">{age ?? '—'}</strong> •{' '}
+                        Age: <strong className="text-slate-800">{age ?? '—'}</strong>
+                        {child.date_of_birth && (
+                          <span className="text-slate-500"> • 🇪🇹 {formatEthiopianDate(child.date_of_birth)}</span>
+                        )} •{' '}
                         <span>{child.grade_level_name || 'Primary'}</span>
                       </div>
 
@@ -581,16 +586,16 @@ export default function ParentChildren() {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   {/* Date of Birth with live age calculator */}
                   <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">
-                      Date of Birth <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="date"
-                      name="date_of_birth"
-                      value={formData.date_of_birth}
-                      onChange={handleFormChange}
+                    <DateOfBirthField
+                      label="Date of Birth"
                       required
-                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      value={formData.date_of_birth}
+                      onChange={(iso) => {
+                        setFormData((prev) => ({ ...prev, date_of_birth: iso }));
+                        setFormError('');
+                      }}
+                      accentColor="blue"
+                      size="compact"
                     />
                     {calculatedAge !== null && (
                       <div className="mt-1 text-xs">

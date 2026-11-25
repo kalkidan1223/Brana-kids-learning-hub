@@ -1,11 +1,15 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import axiosClient from '../../api/axiosClient';
 import EthiopianChildHome from '../../components/child/EthiopianChildHome';
 
 export default function ChildDashboard() {
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
+  const [recommendationNotice, setRecommendationNotice] = useState('');
+  const [startingRecommendationId, setStartingRecommendationId] = useState(null);
 
   useEffect(() => {
     fetchDashboard();
@@ -28,5 +32,32 @@ export default function ChildDashboard() {
     }
   };
 
-  return <EthiopianChildHome data={data} loading={loading} error={error} onRetry={fetchDashboard} />;
+  const startRecommendation = async (recommendation) => {
+    setStartingRecommendationId(recommendation.id);
+    setRecommendationNotice('');
+    try {
+      const { data: result } = await axiosClient.post(`/child/recommendations/${recommendation.id}/start`);
+      if (!result.lesson_id) throw new Error('The lesson could not be opened. Please try another learning step.');
+      navigate(`/child/lessons/${result.lesson_id}`);
+    } catch (err) {
+      if (err.response?.status === 409 && err.response?.data?.code === 'RECOMMENDATION_UNAVAILABLE') {
+        setRecommendationNotice(err.response.data.error || 'We found another learning step for you.');
+        await fetchDashboard();
+      } else {
+        setRecommendationNotice(err.response?.data?.error || err.message || 'The lesson could not be opened. Please try again.');
+      }
+    } finally {
+      setStartingRecommendationId(null);
+    }
+  };
+
+  return <EthiopianChildHome
+    data={data}
+    loading={loading}
+    error={error}
+    onRetry={fetchDashboard}
+    onStartRecommendation={startRecommendation}
+    startingRecommendationId={startingRecommendationId}
+    recommendationNotice={recommendationNotice}
+  />;
 }

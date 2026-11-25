@@ -364,6 +364,32 @@ function LessonCard({ lesson, index, isNext }) {
               {lesson.required_resources_completed} of {lesson.total_required_resources} steps completed
             </div>
           )}
+
+          {/* Dynamic Resource Badges posted by Instructor */}
+          {(lesson.material_count > 0 || lesson.activity_count > 0 || lesson.video_count > 0 || lesson.quiz_count > 0) && (
+            <div className="flex items-center gap-2 flex-wrap pt-1">
+              {lesson.material_count > 0 && (
+                <span className="bg-amber-100 text-amber-900 border border-amber-200 text-xs font-black px-2.5 py-0.5 rounded-full flex items-center gap-1">
+                  <span>🎴</span> {lesson.material_count} Card{lesson.material_count !== 1 ? 's' : ''}
+                </span>
+              )}
+              {lesson.video_count > 0 && (
+                <span className="bg-rose-100 text-rose-900 border border-rose-200 text-xs font-black px-2.5 py-0.5 rounded-full flex items-center gap-1">
+                  <span>🎬</span> {lesson.video_count} Video
+                </span>
+              )}
+              {lesson.activity_count > 0 && (
+                <span className="bg-purple-100 text-purple-900 border border-purple-200 text-xs font-black px-2.5 py-0.5 rounded-full flex items-center gap-1">
+                  <span>🎮</span> {lesson.activity_count} Practice
+                </span>
+              )}
+              {lesson.quiz_count > 0 && (
+                <span className="bg-emerald-100 text-emerald-900 border border-emerald-200 text-xs font-black px-2.5 py-0.5 rounded-full flex items-center gap-1">
+                  <span>❓</span> {lesson.quiz_count} Quiz
+                </span>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Action Button - More Prominent */}

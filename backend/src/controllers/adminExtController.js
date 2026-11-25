@@ -185,6 +185,120 @@ async function listAIRecommendations(req, res, next) {
   }
 }
 
+// GET /api/admin/ai-training-readiness
+// Reports readiness from real assessment events and the protected Python service.
+async function getAITrainingReadiness(req, res, next) {
+  try {
+    const configuredThreshold = Number(process.env.ML_STRUGGLE_THRESHOLD || 0.60);
+    const struggleThreshold = Number.isFinite(configuredThreshold) && configuredThreshold > 0 && configuredThreshold < 1
+      ? configuredThreshold
+      : 0.60;
+    const result = await query(
+      `WITH all_events AS (
+         SELECT e.*,
+                COALESCE(e.subject_code_snapshot, s.code) AS subject_code,
+                COALESCE(e.grade_code_snapshot, gl.code) AS grade_code
+         FROM student_assessment_events e
+         LEFT JOIN courses c ON c.id = e.course_id
+         LEFT JOIN subjects s ON s.id = c.subject_id
+         LEFT JOIN grade_levels gl ON gl.id = c.grade_level_id
+       ),
+       ordered_events AS (
+         SELECT student_id, subject_code, grade_code, percentage_score,
+                COUNT(*) OVER (
+                  PARTITION BY student_id, subject_code
+                  ORDER BY submitted_at, id
+                  ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+                )::int AS prior_attempt_count
+         FROM all_events
+         WHERE completion_status = 'graded' AND subject_code IS NOT NULL AND grade_code IS NOT NULL
+       ),
+       summary AS (
+         SELECT (SELECT COUNT(*)::int FROM all_events) AS total_attempts,
+                (SELECT COUNT(DISTINCT student_id)::int FROM all_events WHERE student_id IS NOT NULL AND subject_code IS NOT NULL AND grade_code IS NOT NULL) AS learners_with_records,
+                COUNT(DISTINCT student_id) FILTER (WHERE prior_attempt_count >= 1)::int AS learners_with_training_examples,
+                COUNT(*) FILTER (WHERE prior_attempt_count >= 1)::int AS valid_training_examples,
+                COUNT(*) FILTER (
+                  WHERE prior_attempt_count >= 1 AND percentage_score < $1
+                )::int AS needs_practice_examples,
+                COUNT(*) FILTER (
+                  WHERE prior_attempt_count >= 1 AND percentage_score >= $1
+                )::int AS meets_threshold_examples,
+                (SELECT COUNT(*)::int FROM all_events WHERE subject_code IS NULL OR grade_code IS NULL) AS missing_subject_or_grade,
+                (SELECT COUNT(*)::int FROM all_events WHERE percentage_score IS NULL OR maximum_score IS NULL OR maximum_score <= 0) AS missing_score,
+                (SELECT COUNT(*)::int FROM all_events WHERE student_id IS NULL) AS missing_student,
+                (SELECT COUNT(*)::int FROM all_events WHERE course_id IS NULL OR lesson_id IS NULL) AS missing_course_or_lesson,
+                (SELECT COUNT(*)::int FROM all_events WHERE submitted_at IS NULL OR attempt_number IS NULL) AS missing_attempt_metadata
+         FROM ordered_events
+       )
+       SELECT * FROM summary`,
+      [struggleThreshold * 100]
+    );
+    const counts = result.rows[0];
+    const enoughExamples = counts.valid_training_examples >= 30;
+    const enoughLearners = counts.learners_with_training_examples >= 5;
+    const enoughClasses = counts.needs_practice_examples >= 5 && counts.meets_threshold_examples >= 5;
+    const trainingPermitted = enoughExamples && enoughLearners && enoughClasses;
+    const reasons = [];
+    if (!enoughExamples) reasons.push(`Need 30 time-ordered examples; found ${counts.valid_training_examples}.`);
+    if (!enoughLearners) reasons.push(`Need 5 distinct learners with valid time-ordered examples; found ${counts.learners_with_training_examples}.`);
+    if (!enoughClasses) reasons.push(`Need at least 5 examples in each target class; found ${counts.needs_practice_examples} below the threshold and ${counts.meets_threshold_examples} meeting it.`);
+
+    let model = {
+      status: process.env.ML_SERVICE_URL && process.env.ML_SERVICE_TOKEN ? 'python_service_unavailable' : 'not_configured',
+      model_available: false,
+      model_version: null,
+      metrics: null,
+      trained_at: null,
+    };
+    if (process.env.ML_SERVICE_URL && process.env.ML_SERVICE_TOKEN) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 900);
+      try {
+        const response = await fetch(`${process.env.ML_SERVICE_URL.replace(/\/$/, '')}/internal/status`, {
+          headers: { 'X-Internal-Token': process.env.ML_SERVICE_TOKEN },
+          signal: controller.signal,
+        });
+        if (response.ok) model = await response.json();
+      } catch (_) {
+        // Keep the readiness endpoint useful while Python is stopped.
+      } finally {
+        clearTimeout(timeout);
+      }
+    }
+
+    res.json({
+      threshold: struggleThreshold,
+      assessment_attempts: counts.total_attempts,
+      learners_with_assessment_records: counts.learners_with_records,
+      learners_with_training_examples: counts.learners_with_training_examples,
+      valid_training_examples: counts.valid_training_examples,
+      target_distribution: {
+        needs_practice: counts.needs_practice_examples,
+        meets_existing_threshold: counts.meets_threshold_examples,
+      },
+      missing_values: {
+        subject_or_grade: counts.missing_subject_or_grade,
+        score: counts.missing_score,
+        student_group_key: counts.missing_student,
+        course_or_lesson: counts.missing_course_or_lesson,
+        attempt_metadata: counts.missing_attempt_metadata,
+      },
+      training_permitted: trainingPermitted,
+      readiness_criteria: 'At least 30 time-ordered examples, 5 distinct learners, and 5 examples in each class. This is a guarded development minimum for grouped evaluation, not a statistical guarantee of production reliability.',
+      blocked_reasons: trainingPermitted ? [] : reasons,
+      model: {
+        status: model.status || 'python_service_unavailable',
+        version: model.model_version,
+        metrics: model.metrics,
+        last_successful_training_at: model.trained_at,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
 /**
  * PATCH /api/admin/ai-recommendations/:id/view
  * Mark a recommendation as viewed.
@@ -678,6 +792,7 @@ module.exports = {
   updateLessonStatus,
   listProgress,
   listAIRecommendations,
+  getAITrainingReadiness,
   markRecommendationViewed,
   listAnnouncements,
   listUserAnnouncements,

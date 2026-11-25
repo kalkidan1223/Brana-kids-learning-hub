@@ -654,11 +654,14 @@ async function updateInstructorAssignments(req, res, next) {
         }
         return { grade_level_id: parseInt(p.grade_level_id, 10), subject_id: parseInt(p.subject_id, 10) };
       }).filter(p => !isNaN(p.grade_level_id) && !isNaN(p.subject_id));
+      const uniquePairs = [...new Map(
+        pairs.map(pair => [`${pair.grade_level_id}:${pair.subject_id}`, pair])
+      ).values()].sort((a, b) => a.grade_level_id - b.grade_level_id || a.subject_id - b.subject_id);
 
       const allCourseIds = new Set(assigned_courses.map(c => String(c)));
       const allGradeLevelIds = new Set(assigned_grade_levels.map(g => parseInt(g, 10)).filter(g => !isNaN(g)));
 
-      for (const pair of pairs) {
+      for (const pair of uniquePairs) {
         allGradeLevelIds.add(pair.grade_level_id);
 
         const sgaRes = await client.query(
@@ -666,7 +669,8 @@ async function updateInstructorAssignments(req, res, next) {
            FROM subject_grade_assignments sga
            JOIN subjects s ON s.id = sga.subject_id
            JOIN grade_levels gl ON gl.id = sga.grade_level_id
-           WHERE sga.subject_id = $1 AND sga.grade_level_id = $2 AND sga.is_active = TRUE`,
+           WHERE sga.subject_id = $1 AND sga.grade_level_id = $2 AND sga.is_active = TRUE
+           FOR UPDATE OF sga`,
           [pair.subject_id, pair.grade_level_id]
         );
         if (!sgaRes.rows.length) {
@@ -676,6 +680,32 @@ async function updateInstructorAssignments(req, res, next) {
         }
 
         const { subject_name, grade_level_name } = sgaRes.rows[0];
+
+        // Serialize assignments for this subject-grade row, then reject a
+        // pair already owned by another instructor. This protects against two
+        // admins saving the same teaching area at the same time.
+        const currentOwner = await client.query(
+          `SELECT COALESCE(active_user.full_name, course_user.full_name) AS full_name
+           FROM courses c
+           LEFT JOIN instructor_assignments ia
+             ON ia.course_id = c.id AND ia.status = 'active'
+           LEFT JOIN instructors active_instructor ON active_instructor.id = ia.instructor_id
+           LEFT JOIN users active_user ON active_user.id = active_instructor.user_id
+           LEFT JOIN instructors course_instructor ON course_instructor.id = c.instructor_id
+           LEFT JOIN users course_user ON course_user.id = course_instructor.user_id
+           WHERE c.grade_level_id = $1 AND c.subject_id = $2
+             AND c.status != 'archived'
+             AND ((ia.instructor_id IS NOT NULL AND ia.instructor_id <> $3)
+               OR (ia.instructor_id IS NULL AND c.instructor_id IS NOT NULL AND c.instructor_id <> $3))
+           ORDER BY ia.id NULLS LAST, c.id
+           LIMIT 1`,
+          [pair.grade_level_id, pair.subject_id, id]
+        );
+        if (currentOwner.rows.length) {
+          const error = new Error(`${subject_name} for ${grade_level_name} is already assigned to ${currentOwner.rows[0].full_name}. Remove that assignment before assigning it to another instructor.`);
+          error.status = 409;
+          throw error;
+        }
 
         // Check if an active course already exists for this grade and subject
         const existingCourse = await client.query(
@@ -688,9 +718,7 @@ async function updateInstructorAssignments(req, res, next) {
         let courseId;
         if (existingCourse.rows.length > 0) {
           courseId = existingCourse.rows[0].id;
-          if (!existingCourse.rows[0].instructor_id) {
-            await client.query('UPDATE courses SET instructor_id = $1, updated_at = now() WHERE id = $2', [id, courseId]);
-          }
+          await client.query('UPDATE courses SET instructor_id = $1, updated_at = now() WHERE id = $2', [id, courseId]);
         } else {
           // Auto-create course for this grade level and subject
           const newCourse = await client.query(
@@ -744,10 +772,55 @@ async function updateInstructorAssignments(req, res, next) {
         )
         : { rows: [] };
 
-      if (allowedCourses.rows.length !== new Set(assigned_courses.map(String)).size) {
+      // `finalCourseIds` includes both courses submitted by older clients and
+      // courses created above for newly selected subject-grade pairs. Validate
+      // the complete final assignment set, not only the original request body.
+      if (allowedCourses.rows.length !== finalCourseIds.length) {
         const error = new Error('Every assigned course must match a selected grade level and an active subject-grade pairing');
         error.status = 400;
         throw error;
+      }
+
+      // Also validate courses supplied directly by legacy clients that do not
+      // send `assigned_pairs`. Lock their curriculum pair rows in stable order
+      // so simultaneous assignments cannot claim the same teaching area.
+      if (finalCourseIds.length) {
+        await client.query(
+          `SELECT sga.id
+           FROM subject_grade_assignments sga
+           JOIN courses c
+             ON c.subject_id = sga.subject_id AND c.grade_level_id = sga.grade_level_id
+           WHERE c.id = ANY($1::bigint[]) AND sga.is_active = TRUE
+           ORDER BY sga.grade_level_id, sga.subject_id
+           FOR UPDATE OF sga`,
+          [finalCourseIds]
+        );
+
+        const assignmentConflict = await client.query(
+          `SELECT s.name AS subject_name, gl.name AS grade_level_name,
+                  COALESCE(active_user.full_name, course_user.full_name) AS instructor_name
+           FROM courses c
+           JOIN subjects s ON s.id = c.subject_id
+           JOIN grade_levels gl ON gl.id = c.grade_level_id
+           LEFT JOIN instructor_assignments ia
+             ON ia.course_id = c.id AND ia.status = 'active'
+           LEFT JOIN instructors active_instructor ON active_instructor.id = ia.instructor_id
+           LEFT JOIN users active_user ON active_user.id = active_instructor.user_id
+           LEFT JOIN instructors course_instructor ON course_instructor.id = c.instructor_id
+           LEFT JOIN users course_user ON course_user.id = course_instructor.user_id
+           WHERE c.id = ANY($1::bigint[])
+             AND ((ia.instructor_id IS NOT NULL AND ia.instructor_id <> $2)
+               OR (ia.instructor_id IS NULL AND c.instructor_id IS NOT NULL AND c.instructor_id <> $2))
+           ORDER BY ia.id NULLS LAST, c.id
+           LIMIT 1`,
+          [finalCourseIds, id]
+        );
+        if (assignmentConflict.rows.length) {
+          const conflict = assignmentConflict.rows[0];
+          const error = new Error(`${conflict.subject_name} for ${conflict.grade_level_name} is already assigned to ${conflict.instructor_name}. Remove that assignment before assigning it to another instructor.`);
+          error.status = 409;
+          throw error;
+        }
       }
 
       await client.query(

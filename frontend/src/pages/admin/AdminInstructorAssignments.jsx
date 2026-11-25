@@ -6,7 +6,7 @@ import axiosClient from '../../api/axiosClient';
 
 const pairKey = (gradeId, subjectId) => `${gradeId}:${subjectId}`;
 
-function AssignmentModal({ instructor, gradeLevels, subjectGradeAssignments, courses, onSave, onClose }) {
+function AssignmentModal({ instructor, instructors, gradeLevels, subjectGradeAssignments, courses, onSave, onClose }) {
   const instructorCourses = instructor.assigned_courses || [];
   const activePairs = new Set(subjectGradeAssignments.map(item => pairKey(item.grade_level_id, item.subject_id)));
   const initialPairs = instructorCourses
@@ -144,16 +144,28 @@ function AssignmentModal({ instructor, gradeLevels, subjectGradeAssignments, cou
                             const key = pairKey(level.id, subject.subject_id);
                             const matchingCourses = coursesForPair(level.id, subject.subject_id);
                             const selected = selectedPairs.includes(key);
+                            const assignedElsewhere = instructors.find(candidate =>
+                              String(candidate.id) !== String(instructor.id) &&
+                              candidate.assigned_courses?.some(course =>
+                                String(course.grade_level_id) === String(level.id) &&
+                                String(course.subject_id) === String(subject.subject_id) &&
+                                course.status !== 'archived'
+                              )
+                            );
+                            const unavailable = Boolean(assignedElsewhere && !selected);
                             return (
                               <button
                                 key={key}
                                 type="button"
                                 aria-pressed={selected}
+                                disabled={unavailable}
                                 onClick={() => toggleSubject(level.id, subject.subject_id)}
                                 className={`flex items-center gap-3 rounded-xl border p-3 text-left transition ${
                                   selected
                                     ? 'border-emerald-500 bg-emerald-50 text-emerald-950 ring-1 ring-emerald-200'
-                                    : 'border-slate-200 text-slate-700 hover:border-emerald-300 hover:bg-slate-50'
+                                    : unavailable
+                                      ? 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400'
+                                      : 'border-slate-200 text-slate-700 hover:border-emerald-300 hover:bg-slate-50'
                                 }`}
                               >
                                 <span
@@ -168,7 +180,11 @@ function AssignmentModal({ instructor, gradeLevels, subjectGradeAssignments, cou
                                 <span className="min-w-0 flex-1">
                                   <span className="block truncate text-sm font-bold text-slate-800">{subject.subject_name}</span>
                                   <span className="mt-0.5 block text-xs text-slate-500">
-                                    {subject.subject_code} · {matchingCourses.length > 0 ? `${matchingCourses.length} ${matchingCourses.length === 1 ? 'learning area' : 'learning areas'}` : 'Ready to assign'}
+                                    {subject.subject_code} · {assignedElsewhere
+                                      ? `Assigned to ${assignedElsewhere.full_name}`
+                                      : matchingCourses.length > 0
+                                        ? `${matchingCourses.length} ${matchingCourses.length === 1 ? 'learning area' : 'learning areas'}`
+                                        : 'Ready to assign'}
                                   </span>
                                 </span>
                               </button>
@@ -316,7 +332,7 @@ export default function AdminInstructorAssignments() {
         </section>
       </div>
 
-      {editing && <AssignmentModal instructor={editing} gradeLevels={gradeLevels} subjectGradeAssignments={subjectGradeAssignments} courses={courses} onSave={saveAssignments} onClose={() => setEditing(null)} />}
+      {editing && <AssignmentModal instructor={editing} instructors={instructors} gradeLevels={gradeLevels} subjectGradeAssignments={subjectGradeAssignments} courses={courses} onSave={saveAssignments} onClose={() => setEditing(null)} />}
     </AdminLayout>
   );
 }

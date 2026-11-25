@@ -1,6 +1,7 @@
 const { query } = require('../config/db');
 const { resolvePins } = require('./homePinController');
 const { getLessonAccess, getResourceAccess } = require('../utils/learningAccess');
+const { getOrCreateRecommendation, startRecommendation } = require('../services/childLessonRecommendationService');
 const { gradeAnswer, correctAnswerText, formatMatchingAnswer, matchingScore } = require('../utils/quizGrading');
 
 /**
@@ -170,7 +171,7 @@ async function getDashboard(req, res, next) {
         (SELECT COUNT(DISTINCT l.id)::int
          FROM lessons l
          JOIN courses c ON c.id = l.course_id
-         WHERE c.grade_level_id = $2 AND c.status = 'published') as total_lessons,
+         WHERE c.grade_level_id = $2 AND c.status = 'published' AND l.status = 'active') as total_lessons,
         (SELECT COUNT(DISTINCT asub.activity_id)::int
          FROM activity_submissions asub
          WHERE asub.student_id = $1) as completed_activities,
@@ -186,7 +187,8 @@ async function getDashboard(req, res, next) {
     // 2. Continue Learning: Find last accessed incomplete lesson or first available lesson
     const continueRes = await query(
       `SELECT l.id, l.title, l.description, l.order_index,
-              c.id as course_id, c.title as course_title, c.thumbnail_url,
+              COALESCE(l.thumbnail_url, c.thumbnail_url) AS thumbnail_url,
+              c.id as course_id, c.title as course_title,
               gl.name as grade_level_name,
               u.full_name as instructor_name,
               COALESCE(p.completion_percentage, 0)::int as lesson_progress
@@ -196,7 +198,7 @@ async function getDashboard(req, res, next) {
        LEFT JOIN instructors i ON i.id = c.instructor_id
        LEFT JOIN users u ON u.id = i.user_id
        LEFT JOIN progress p ON p.lesson_id = l.id AND p.student_id = $1
-       WHERE c.grade_level_id = $2 AND c.status = 'published'
+       WHERE c.grade_level_id = $2 AND c.status = 'published' AND l.status = 'active'
          AND (p.status IS NULL OR p.status != 'completed')
        ORDER BY p.last_accessed_at DESC NULLS LAST, l.order_index ASC, l.created_at ASC
        LIMIT 1`,
@@ -219,9 +221,9 @@ async function getDashboard(req, res, next) {
        JOIN grade_levels gl ON gl.id = c.grade_level_id
        LEFT JOIN instructors i ON i.id = c.instructor_id
        LEFT JOIN users u ON u.id = i.user_id
-       LEFT JOIN lessons l ON l.course_id = c.id
+       LEFT JOIN lessons l ON l.course_id = c.id AND l.status = 'active'
        LEFT JOIN activities a ON a.lesson_id = l.id AND a.status IN ('active', 'published')
-       LEFT JOIN quizzes q ON q.lesson_id = l.id
+       LEFT JOIN quizzes q ON q.lesson_id = l.id AND q.status IN ('active', 'published')
        LEFT JOIN progress p ON p.course_id = c.id AND p.student_id = $1 AND p.lesson_id = l.id
        WHERE c.grade_level_id = $2 AND c.status = 'published'
        GROUP BY c.id, gl.name, u.full_name
@@ -240,7 +242,8 @@ async function getDashboard(req, res, next) {
        JOIN lessons l ON l.id = a.lesson_id
        JOIN courses c ON c.id = l.course_id
        LEFT JOIN activity_submissions asub ON asub.activity_id = a.id AND asub.student_id = $1
-       WHERE c.grade_level_id = $2 AND c.status = 'published' AND a.status IN ('active', 'published')
+       WHERE c.grade_level_id = $2 AND c.status = 'published' AND l.status = 'active'
+         AND a.status IN ('active', 'published')
          AND asub.id IS NULL
        ORDER BY l.order_index ASC, a.created_at ASC
        LIMIT 5`,
@@ -300,6 +303,13 @@ async function getDashboard(req, res, next) {
       ? child.age
       : (child.date_of_birth ? Math.floor((new Date() - new Date(child.date_of_birth)) / (365.25 * 24 * 60 * 60 * 1000)) : 7);
 
+    let recommendation = null;
+    try {
+      recommendation = await getOrCreateRecommendation(child);
+    } catch (recommendationError) {
+      console.error('Could not load child lesson recommendation:', recommendationError.message);
+    }
+
     const totalXP =
       ((statsRes.rows[0]?.completed_activities || 0) * 20) +
       ((statsRes.rows[0]?.completed_quizzes || 0) * 50) +
@@ -324,6 +334,7 @@ async function getDashboard(req, res, next) {
       stats: statsRes.rows[0] || {},
       total_xp: totalXP,
       continue_learning: continueRes.rows[0] || null,
+      recommendation,
       courses: coursesRes.rows,
       todays_activities: todaysActivitiesRes.rows,
       learning_streak: streakRes.rows[0]?.streak_days || 0,
@@ -334,6 +345,33 @@ async function getDashboard(req, res, next) {
       home_pins: homePins,
       encouragement: praiseRes.rows,
     });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// POST /api/child/recommendations/:recommendationId/start
+async function startChildRecommendation(req, res, next) {
+  try {
+    if (!/^\d+$/.test(String(req.params.recommendationId))) {
+      return res.status(400).json({ error: 'Recommendation ID must be a positive number' });
+    }
+    const child = await resolveChild(req);
+    if (!child) return res.status(404).json({ error: 'Child profile not found' });
+
+    const result = await startRecommendation(child, req.params.recommendationId);
+    if (result.unavailable) {
+      const recommendation = await getOrCreateRecommendation(child);
+      return res.status(409).json({
+        error: result.locked
+          ? 'Finish the previous lesson first. We found another learning step for you.'
+          : 'That lesson is no longer available. We found another learning step for you.',
+        code: 'RECOMMENDATION_UNAVAILABLE',
+        recommendation,
+      });
+    }
+
+    res.json({ lesson_id: result.lesson_id });
   } catch (err) {
     next(err);
   }
@@ -2009,6 +2047,7 @@ async function listAllQuizzes(req, res, next) {
 module.exports = {
   getProfile,
   getDashboard,
+  startChildRecommendation,
   listCourses,
   getCourse,
   getLesson,

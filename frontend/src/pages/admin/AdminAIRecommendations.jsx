@@ -47,7 +47,23 @@ export default function AdminAIRecommendations() {
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [selected, setSelected] = useState(null);
+  const [readiness, setReadiness] = useState(null);
+  const [readinessLoading, setReadinessLoading] = useState(true);
+  const [readinessError, setReadinessError] = useState('');
   const debounce = useRef(null);
+
+  async function loadReadiness() {
+    setReadinessLoading(true);
+    setReadinessError('');
+    try {
+      const { data } = await axiosClient.get('/admin/ai-training-readiness');
+      setReadiness(data);
+    } catch (err) {
+      setReadinessError(err.response?.data?.error || 'Could not load ML training readiness.');
+    } finally {
+      setReadinessLoading(false);
+    }
+  }
 
   const loadRecs = useCallback(async (silent = false) => {
     if (!silent) setLoading(true); else setRefreshing(true);
@@ -83,6 +99,7 @@ export default function AdminAIRecommendations() {
   }, [search, typeFilter, viewedFilter]);
 
   useEffect(() => { loadRecs(); }, [page]);
+  useEffect(() => { loadReadiness(); }, []);
 
   async function markViewed(id) {
     try {
@@ -109,10 +126,45 @@ export default function AdminAIRecommendations() {
               <p className="text-sm text-slate-500">Monitor AI-generated learning recommendations</p>
             </div>
           </div>
-          <button onClick={() => loadRecs(true)} disabled={refreshing} className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50 transition">
+          <button onClick={() => { loadRecs(true); loadReadiness(); }} disabled={refreshing || readinessLoading} className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50 transition">
             <MdRefresh className={refreshing ? 'animate-spin' : ''} /> Refresh
           </button>
         </div>
+
+        <section className="rounded-2xl border border-indigo-100 bg-white p-5 shadow-sm" aria-labelledby="ml-readiness-title">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 id="ml-readiness-title" className="font-bold text-slate-900">Scikit-learn training readiness</h2>
+              <p className="mt-1 text-sm text-slate-500">Assessment history is checked before any model is trained.</p>
+            </div>
+            {readiness && <span className={`rounded-full px-3 py-1 text-xs font-bold ${readiness.training_permitted ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-800'}`}>
+              {readiness.training_permitted ? 'Training gate passed' : 'Collecting real learning data'}
+            </span>}
+          </div>
+          {readinessError && <p role="alert" className="mt-3 text-sm text-rose-700">{readinessError}</p>}
+          {readinessLoading && !readiness ? <p className="mt-4 text-sm text-slate-500">Loading training readiness…</p> : readiness && (
+            <>
+              <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <div className="rounded-xl bg-slate-50 p-3"><p className="text-xs text-slate-500">Assessment attempts</p><p className="mt-1 text-xl font-black text-slate-900">{readiness.assessment_attempts}</p></div>
+                <div className="rounded-xl bg-slate-50 p-3"><p className="text-xs text-slate-500">Learners with records</p><p className="mt-1 text-xl font-black text-slate-900">{readiness.learners_with_assessment_records}</p></div>
+                <div className="rounded-xl bg-slate-50 p-3"><p className="text-xs text-slate-500">Time-ordered examples</p><p className="mt-1 text-xl font-black text-slate-900">{readiness.valid_training_examples}</p></div>
+                <div className="rounded-xl bg-slate-50 p-3"><p className="text-xs text-slate-500">Model status</p><p className="mt-1 text-sm font-bold text-slate-900">{readiness.model?.status?.replaceAll('_', ' ')}</p>{readiness.model?.version && <p className="mt-1 break-all text-xs text-slate-500">{readiness.model.version}</p>}</div>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-xs text-slate-600">
+                <span>Needs practice (&lt; {Math.round(readiness.threshold * 100)}%): <strong>{readiness.target_distribution.needs_practice}</strong></span>
+                <span>Meets existing threshold: <strong>{readiness.target_distribution.meets_existing_threshold}</strong></span>
+                <span>Missing subject/grade: <strong>{readiness.missing_values.subject_or_grade}</strong></span>
+                <span>Missing score: <strong>{readiness.missing_values.score}</strong></span>
+                <span>Missing course/lesson: <strong>{readiness.missing_values.course_or_lesson}</strong></span>
+                <span>Missing attempt metadata: <strong>{readiness.missing_values.attempt_metadata}</strong></span>
+              </div>
+              {!readiness.training_permitted && <ul className="mt-3 list-inside list-disc space-y-1 text-sm text-amber-800">{readiness.blocked_reasons.map(reason => <li key={reason}>{reason}</li>)}</ul>}
+              <p className="mt-3 text-xs text-slate-500">{readiness.readiness_criteria}</p>
+              {readiness.model?.last_successful_training_at && <p className="mt-2 text-xs text-slate-500">Last successful training: {new Date(readiness.model.last_successful_training_at).toLocaleString()}</p>}
+              {readiness.model?.metrics && <p className="mt-2 text-xs text-slate-600">Held-out grouped metrics — Accuracy {Number(readiness.model.metrics.accuracy).toFixed(2)}, Precision {Number(readiness.model.metrics.precision).toFixed(2)}, Recall {Number(readiness.model.metrics.recall).toFixed(2)}, F1 {Number(readiness.model.metrics.f1).toFixed(2)}</p>}
+            </>
+          )}
+        </section>
 
         {/* Filters */}
         <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-4 flex flex-wrap gap-3">
@@ -150,7 +202,7 @@ export default function AdminAIRecommendations() {
             <table className="w-full text-left">
               <thead className="bg-slate-50 border-b border-slate-100">
                 <tr>
-                  {['Student', 'Type', 'Reason', 'Confidence', 'Item ID', 'Generated', 'Viewed', 'Actions'].map(h => (
+                  {['Student', 'Type', 'Reason', 'Confidence', 'Method', 'Item ID', 'Generated', 'Viewed', 'Actions'].map(h => (
                     <th key={h} className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
@@ -158,10 +210,10 @@ export default function AdminAIRecommendations() {
               <tbody className="divide-y divide-slate-50">
                 {loading ? (
                   [...Array(6)].map((_, i) => (
-                    <tr key={i}>{[...Array(8)].map((_, j) => <td key={j} className="px-4 py-3"><div className="h-4 bg-slate-100 rounded animate-pulse" /></td>)}</tr>
+                    <tr key={i}>{[...Array(9)].map((_, j) => <td key={j} className="px-4 py-3"><div className="h-4 bg-slate-100 rounded animate-pulse" /></td>)}</tr>
                   ))
                 ) : recs.length === 0 ? (
-                  <tr><td colSpan={8} className="px-4 py-12 text-center text-slate-400">No recommendations found.</td></tr>
+                  <tr><td colSpan={9} className="px-4 py-12 text-center text-slate-400">No recommendations found.</td></tr>
                 ) : recs.map(r => (
                   <tr key={r.id} className="hover:bg-slate-50 transition">
                     <td className="px-4 py-3">
@@ -177,6 +229,13 @@ export default function AdminAIRecommendations() {
                       <p className="truncate" title={r.reason}>{r.reason || '—'}</p>
                     </td>
                     <td className="px-4 py-3 min-w-[100px]"><ConfidenceBar score={r.confidence_score} /></td>
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      {r.recommendation_source === 'sklearn_model'
+                        ? <span className="rounded-full bg-indigo-100 px-2.5 py-1 text-xs font-semibold text-indigo-700">Scikit-learn</span>
+                        : r.recommendation_source === 'insufficient_data'
+                          ? <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-800">Insufficient data fallback</span>
+                          : <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">Rule fallback</span>}
+                    </td>
                     <td className="px-4 py-3 text-xs text-slate-400 font-mono">#{r.recommended_item_id}</td>
                     <td className="px-4 py-3 text-xs text-slate-400 whitespace-nowrap">
                       {new Date(r.generated_at).toLocaleDateString()}
@@ -230,6 +289,7 @@ export default function AdminAIRecommendations() {
                 <div><p className="text-xs text-slate-400 mb-0.5">Type</p><TypeBadge type={selected.recommendation_type} /></div>
                 <div><p className="text-xs text-slate-400 mb-0.5">Item ID</p><p className="font-mono text-slate-700">#{selected.recommended_item_id}</p></div>
                 <div><p className="text-xs text-slate-400 mb-0.5">Confidence</p><ConfidenceBar score={selected.confidence_score} /></div>
+                <div><p className="text-xs text-slate-400 mb-0.5">Recommendation method</p><p className="text-slate-700">{selected.recommendation_source === 'sklearn_model' ? `Scikit-learn${selected.model_version ? ` · ${selected.model_version}` : ''}` : selected.recommendation_source === 'insufficient_data' ? 'Insufficient data; rule-based fallback' : 'Rule-based fallback'}</p></div>
                 <div><p className="text-xs text-slate-400 mb-0.5">Generated</p><p className="text-slate-700">{new Date(selected.generated_at).toLocaleString()}</p></div>
                 <div><p className="text-xs text-slate-400 mb-0.5">Viewed</p><p className="text-slate-700">{selected.is_viewed ? 'Yes' : 'No'}</p></div>
               </div>
